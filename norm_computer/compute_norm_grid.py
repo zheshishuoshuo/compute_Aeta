@@ -48,7 +48,8 @@ def generate_lens_samples_no_alpha(n_samples=1000, seed=42, mu_DM=13.0, sigma_DM
 def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
                        zl=0.3, zs=2.0, ms=26.0, sigma_m=0.1, m_lim=26.5):
     """
-    计算 A(η)：物理归一化因子，考虑所有先验权重
+    计算 A(η)：物理归一化因子，考虑所有先验权重。
+    返回值按照有效样本的权重总和进行归一化。
     """
     Mh_min, Mh_max = Mh_range
     q_Mh = 1.0 / (Mh_max - Mh_min)
@@ -110,10 +111,10 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
         selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
         sel_prob_array[valid_mask] = selA * selB
 
-    total = np.sum(sel_prob_array * w_array)
-    valid = np.count_nonzero(valid_mask)
+    weight_sum = np.sum(w_array[valid_mask])
+    total = np.sum(sel_prob_array[valid_mask] * w_array[valid_mask])
 
-    return total / valid if valid > 0 else 0.0
+    return total / weight_sum if weight_sum > 0 else 0.0
 # === 单点计算任务 ===
 
 def single_A_eta_entry(args, seed=42):
