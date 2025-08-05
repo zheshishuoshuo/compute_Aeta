@@ -1,0 +1,44 @@
+1
+Traceback (most recent call last):
+  File "<frozen runpy>", line 189, in _run_module_as_main
+  File "<frozen runpy>", line 112, in _get_module_details
+  File "/home/shuoz/compute_Aeta/__init__.py", line 6, in <module>
+    from .run_mcmc import run_mcmc
+ModuleNotFoundError: No module named 'compute_Aeta.run_mcmc'
+1
+/home/shuoz/compute_Aeta/norm_computer/compute_norm_grid.py:150: SyntaxWarning: invalid escape sequence '\e'
+  """Compute a single entry of :math:`A_\text{phys}(\eta)`.
+[INFO] 共需计算 8000000 个 A(eta) 点
+  0%|          | 0/8000000 [00:00<?, ?it/s]  0%|          | 0/8000000 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/home/shuoz/compute_Aeta/norm_computer/compute_norm_grid.py", line 325, in <module>
+    build_A_phys_table_parallel_4D(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_grid,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        n_samples=2000,
+        ^^^^^^^^^^^^^^^
+        filename="A_phys_table_4D_new_with_pMstar.csv"
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/home/shuoz/compute_Aeta/norm_computer/compute_norm_grid.py", line 301, in build_A_phys_table_parallel_4D
+    for result in tqdm(pool.imap_unordered(_worker, args_list), total=len(args_list)):
+                  ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/shuoz/miniconda3/lib/python3.13/site-packages/tqdm/std.py", line 1181, in __iter__
+    for obj in iterable:
+               ^^^^^^^^
+  File "/home/shuoz/miniconda3/lib/python3.13/multiprocessing/pool.py", line 873, in next
+    raise value
+  File "/home/shuoz/miniconda3/lib/python3.13/multiprocessing/pool.py", line 540, in _handle_tasks
+    put(task)
+    ~~~^^^^^^
+  File "/home/shuoz/miniconda3/lib/python3.13/multiprocessing/connection.py", line 206, in send
+    self._send_bytes(_ForkingPickler.dumps(obj))
+                     ~~~~~~~~~~~~~~~~~~~~~^^^^^
+  File "/home/shuoz/miniconda3/lib/python3.13/multiprocessing/reduction.py", line 51, in dumps
+    cls(buf, protocol).dump(obj)
+    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^
+AttributeError: Can't get local object 'build_A_phys_table_parallel_4D.<locals>._worker'

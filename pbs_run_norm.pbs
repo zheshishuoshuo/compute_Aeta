@@ -1,0 +1,18 @@
+#!/bin/bash
+#PBS -N norm
+#PBS -m abe
+#PBS -M zhangshuo01@sjtu.edu.cn
+#PBS -l nodes=4:ppn=72
+#PBS -l mem=300gb
+#PBS -l walltime=40:00:00
+#PBS -q normal
+#PBS -j oe
+#PBS -o /home/shuoz/compute_Aeta/norm.log
+
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate base
+
+cd ~
+echo 1
+python3 -m compute_Aeta.norm_computer.compute_norm_grid
+echo 2
