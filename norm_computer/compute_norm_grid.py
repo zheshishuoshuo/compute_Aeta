@@ -274,7 +274,7 @@ def build_A_phys_table_parallel_4D(
     done_set = set()
     if os.path.exists(filename):
         df_done = pd.read_csv(filename)
-        done_set = set(key4(*row) for row in df_done[['mu_DM','sigma_DM','beta_DM','xi_DM']].to_numpy())
+        done_set = set(key4(*row, prec) for row in df_done[['mu_DM','sigma_DM','beta_DM','xi_DM']].to_numpy())
         print(f"[INFO] 已完成 {len(done_set)} 个点，将跳过这些")
 
     # === 待计算参数列表并分配种子 ===
@@ -284,7 +284,7 @@ def build_A_phys_table_parallel_4D(
         for sigma in sigmaDM_grid
         for beta in betaDM_grid
         for xi in xiDM_grid
-        if key4(mu, sigma, beta, xi) not in done_set
+        if key4(mu, sigma, beta, xi, prec) not in done_set
     ]
     args_list = [
         (params, i)  # unique seed per job
