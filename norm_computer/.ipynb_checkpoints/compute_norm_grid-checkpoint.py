@@ -234,7 +234,7 @@ def _worker(arg_seed):
     params, seed = arg_seed
     return single_A_eta_entry(params, seed=seed)
 
-def key4(mu, s, b, x):
+def key4(mu, s, b, x, prec):
         return (round(mu, prec), round(s, prec), round(b, prec), round(x, prec))
     
 def build_A_phys_table_parallel_4D(
