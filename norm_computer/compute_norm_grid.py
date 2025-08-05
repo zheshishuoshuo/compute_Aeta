@@ -79,7 +79,16 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
         logMstar_array, a=a_skew, loc=mu_star, scale=sigma_star
     )
     p_logRe = norm.pdf(logRe_array, loc=logRe_model_array, scale=sigma_Re)
-    w_array = (p_logMh * p_logMstar * p_logRe) / q_Mh
+    # Sampling PDFs (match generate_lens_samples_no_alpha)
+    q_logMstar = norm.pdf(logMstar_array, loc=11.4, scale=0.3)
+    q_logRe = norm.pdf(
+        logRe_array, loc=1 + 0.8 * (logMstar_array - 11.4), scale=0.15
+    )
+
+    # Importance weights: target PDF / sampling PDF
+    w_array = (p_logMh * p_logMstar * p_logRe) / (
+        q_Mh * q_logMstar * q_logRe
+    )
 
     # === 对每个透镜求解放大率 ===
     n = len(samples_array)
@@ -111,8 +120,8 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
         selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
         sel_prob_array[valid_mask] = selA * selB
 
-    weight_sum = np.sum(w_array[valid_mask])
-    total = np.sum(sel_prob_array[valid_mask] * w_array[valid_mask])
+    total = np.sum(sel_prob_array * w_array)
+    weight_sum = np.sum(w_array)
 
     return total / weight_sum if weight_sum > 0 else 0.0
 # === 单点计算任务 ===
