@@ -30,18 +30,55 @@ def logRe_of_logMsps(logMsps, model='deVauc'):
 
 # === Sample Generation ===
 
-def generate_lens_samples_no_alpha(n_samples=1000, seed=42, mu_DM=13.0, sigma_DM=0.2, n_sigma=3):
+def generate_lens_samples_no_alpha(
+    n_samples=1000,
+    seed=42,
+    mu_DM=13.0,
+    sigma_DM=0.2,
+    n_sigma=3,
+):
+    """按照真实先验生成透镜样本（不包含 ``alpha_sps``）。
+
+    Parameters
+    ----------
+    n_samples : int
+        需要生成的样本数。
+    seed : int, optional
+        随机数种子。
+    mu_DM, sigma_DM : float
+        暗物质先验的均值与标准差。
+    n_sigma : int
+        生成 ``logMh`` 的范围倍数。
+
+    Returns
+    -------
+    samples : list[tuple]
+        ``(logM_star, logRe, logMh, beta)`` 的列表。
+    Mh_range : tuple
+        ``(Mh_min, Mh_max)`` 用于重要性权重。
     """
-    生成透镜样本，不使用 alpha_sps。
-    输出：(logM_star, logRe, logMh, beta)，以及 Mh 的采样范围
-    """
+
     rng = np.random.default_rng(seed)
-    logMstar = rng.normal(11.4, 0.3, n_samples)
-    logRe = rng.normal(1 + 0.8 * (logMstar - 11.4), 0.15, n_samples)
+
+    # --- Stellar mass from skew-normal prior ---
+    a_skew = 10 ** MODEL_P["log_s_star"]
+    logMstar = skewnorm.rvs(
+        a=a_skew, loc=MODEL_P["mu_star"], scale=MODEL_P["sigma_star"],
+        size=n_samples, random_state=rng
+    )
+
+    # --- Effective radius conditional on stellar mass ---
+    mu_Re = logRe_of_logMsps(logMstar)
+    logRe = rng.normal(loc=mu_Re, scale=MODEL_P["sigma_R"], size=n_samples)
+
+    # --- Halo mass sampled uniformly in wide range ---
     Mh_min = mu_DM - n_sigma * sigma_DM
     Mh_max = mu_DM + n_sigma * sigma_DM
     logMh = rng.uniform(Mh_min, Mh_max, n_samples)
+
+    # --- Source position ---
     beta = rng.uniform(0.0, 1.0, n_samples)
+
     return list(zip(logMstar, logRe, logMh, beta)), (Mh_min, Mh_max)
 
 # === Core Computation ===
@@ -53,12 +90,6 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     """
     Mh_min, Mh_max = Mh_range
     q_Mh = 1.0 / (Mh_max - Mh_min)
-
-    # === 星质量分布参数 ===
-    a_skew = 10 ** MODEL_P['log_s_star']
-    mu_star = MODEL_P['mu_star']
-    sigma_star = MODEL_P['sigma_star']
-    sigma_Re = MODEL_P['sigma_R']
 
     # === 将样本转换为 NumPy 数组 ===
     samples_array = np.asarray(samples)
@@ -75,20 +106,9 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     )
 
     p_logMh = norm.pdf(logMh_array, loc=mu_DM_i_array, scale=sigma_DM)
-    p_logMstar = skewnorm.pdf(
-        logMstar_array, a=a_skew, loc=mu_star, scale=sigma_star
-    )
-    p_logRe = norm.pdf(logRe_array, loc=logRe_model_array, scale=sigma_Re)
-    # Sampling PDFs (match generate_lens_samples_no_alpha)
-    q_logMstar = norm.pdf(logMstar_array, loc=11.4, scale=0.3)
-    q_logRe = norm.pdf(
-        logRe_array, loc=1 + 0.8 * (logMstar_array - 11.4), scale=0.15
-    )
 
-    # Importance weights: target PDF / sampling PDF
-    w_array = (p_logMh * p_logMstar * p_logRe) / (
-        q_Mh * q_logMstar * q_logRe
-    )
+    # Importance weights: only halo mass differs from sampling PDF
+    w_array = p_logMh / q_Mh
 
     # === 对每个透镜求解放大率 ===
     n = len(samples_array)
