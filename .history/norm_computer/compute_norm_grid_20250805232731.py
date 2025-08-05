@@ -296,7 +296,7 @@ def build_A_phys_table_parallel_4D(
 # === 主程序入口 ===
 
 if __name__ == "__main__":
-    muDM_grid    = np.linspace(11.5, 13.5, 200)      # Δμ = 0.0345
+    muDM_grid    = np.linspace(11.5, 13.5, 100)      # Δμ = 0.0345
     sigmaDM_grid = np.linspace(0.1, 0.5, 100)    # Δσ = 0.0138
     betaDM_grid  = np.linspace(1.0, 3.0, 100)    # Δβ = 0.069
     xiDM_grid    = 0                            # 固定为 0
@@ -305,5 +305,5 @@ if __name__ == "__main__":
     build_A_phys_table_parallel_4D(
         muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_grid,
         n_samples=2000,
-        filename="A_phys_table_4D_new_with_pMstar.csv"
+        filename="A_phys_table_4D.csv"
     )
