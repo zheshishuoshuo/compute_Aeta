@@ -35,7 +35,7 @@ def generate_lens_samples_no_alpha(
     seed=42,
     mu_DM=13.0,
     sigma_DM=0.2,
-    n_sigma=3,
+    n_sigma=5,
 ):
     """按照真实先验生成透镜样本（不包含 ``alpha_sps``）。
 
