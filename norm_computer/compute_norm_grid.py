@@ -126,10 +126,29 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     return total / weight_sum if weight_sum > 0 else 0.0
 # === 单点计算任务 ===
 
-def single_A_eta_entry(args, seed=42):
+def single_A_eta_entry(args, seed=None):
+    """Compute a single entry of :math:`A_\text{phys}(\eta)`.
+
+    Parameters
+    ----------
+    args : tuple
+        ``(muDM, sigmaDM, beta_DM, xi_DM, n_samples, n_sigma)``
+        defining the physical model.
+    seed : int, optional
+        Base random seed.  The actual seed used for the RNG is
+        ``(seed or os.getpid()) + hash(args) % 2**32`` ensuring a unique
+        and reproducible stream for each parameter tuple.
+    """
+
     muDM, sigmaDM, beta_DM, xi_DM, n_samples, n_sigma = args
+    base_seed = os.getpid() if seed is None else seed
+    unique_seed = (base_seed + hash(args)) % 2**32
     samples, Mh_range = generate_lens_samples_no_alpha(
-        n_samples=n_samples, mu_DM=muDM, sigma_DM=sigmaDM, n_sigma=n_sigma, seed=seed
+        n_samples=n_samples,
+        mu_DM=muDM,
+        sigma_DM=sigmaDM,
+        n_sigma=n_sigma,
+        seed=unique_seed,
     )
     A_eta = compute_A_phys_eta(
         mu_DM_cnst=muDM,
@@ -192,16 +211,29 @@ def single_A_eta_entry(args, seed=42):
 #     print(f"[INFO] 所有任务完成，结果已保存到 {filename}")
 
 
-def build_A_phys_table_parallel_4D(muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_grid,
-                                    n_samples=1000, n_sigma=3,
-                                    filename='A_phys_table_4D.csv', nproc=None, batch_size=1000,
-                                    prec=6):
-    """
-    构建 A_phys(eta) 插值表（四维），并行运行。
-    使用浮点精度量化避免 (mu, sigma, beta, xi) 比较失败。
-    """
-    from functools import partial
+def build_A_phys_table_parallel_4D(
+    muDM_grid,
+    sigmaDM_grid,
+    betaDM_grid,
+    xiDM_grid,
+    n_samples=1000,
+    n_sigma=3,
+    filename="A_phys_table_4D.csv",
+    nproc=None,
+    batch_size=1000,
+    prec=6,
+):
+    """构建 ``A_phys(eta)`` 插值表（四维），并行运行。
 
+    使用浮点精度量化避免 ``(mu, sigma, beta, xi)`` 比较失败。
+
+    Notes
+    -----
+    For reproducibility each parameter tuple is paired with a unique
+    integer seed equal to its enumeration index.  ``single_A_eta_entry``
+    mixes this seed with a hash of the tuple, yielding deterministic and
+    independent random streams across workers.
+    """
     if nproc is None:
         nproc = max(1, cpu_count() - 1)
 
@@ -210,7 +242,8 @@ def build_A_phys_table_parallel_4D(muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_gr
         xiDM_grid = [float(xiDM_grid)]
 
     # === 浮点量化 key 工具 ===
-    def key4(mu, s, b, x): return (round(mu, prec), round(s, prec), round(b, prec), round(x, prec))
+    def key4(mu, s, b, x):
+        return (round(mu, prec), round(s, prec), round(b, prec), round(x, prec))
 
     # === 已完成点集 ===
     done_set = set()
@@ -219,8 +252,8 @@ def build_A_phys_table_parallel_4D(muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_gr
         done_set = set(key4(*row) for row in df_done[['mu_DM','sigma_DM','beta_DM','xi_DM']].to_numpy())
         print(f"[INFO] 已完成 {len(done_set)} 个点，将跳过这些")
 
-    # === 待计算参数列表 ===
-    args_list = [
+    # === 待计算参数列表并分配种子 ===
+    param_list = [
         (mu, sigma, beta, xi, n_samples, n_sigma)
         for mu in muDM_grid
         for sigma in sigmaDM_grid
@@ -228,7 +261,15 @@ def build_A_phys_table_parallel_4D(muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_gr
         for xi in xiDM_grid
         if key4(mu, sigma, beta, xi) not in done_set
     ]
+    args_list = [
+        (params, i)  # unique seed per job
+        for i, params in enumerate(param_list)
+    ]
     print(f"[INFO] 共需计算 {len(args_list)} 个 A(eta) 点")
+
+    def _worker(arg_seed):
+        params, seed = arg_seed
+        return single_A_eta_entry(params, seed=seed)
 
     # === 并行计算 ===
     with Pool(nproc) as pool:
@@ -237,8 +278,10 @@ def build_A_phys_table_parallel_4D(muDM_grid, sigmaDM_grid, betaDM_grid, xiDM_gr
             if os.stat(filename).st_size == 0:
                 f.write('mu_DM,sigma_DM,beta_DM,xi_DM,A_phys\n')
 
-            for result in tqdm(pool.imap_unordered(single_A_eta_entry, args_list), total=len(args_list)):
-                buffer.append(f"{result['mu_DM']},{result['sigma_DM']},{result['beta_DM']},{result['xi_DM']},{result['A_phys']}\n")
+            for result in tqdm(pool.imap_unordered(_worker, args_list), total=len(args_list)):
+                buffer.append(
+                    f"{result['mu_DM']},{result['sigma_DM']},{result['beta_DM']},{result['xi_DM']},{result['A_phys']}\n"
+                )
                 if len(buffer) >= batch_size:
                     f.writelines(buffer)
                     f.flush()
