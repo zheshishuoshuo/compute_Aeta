@@ -40,9 +40,6 @@ def test_importance_weighting_unbiased(monkeypatch):
         Mh_range=Mh_range,
         sigma_m=1.0,
         m_lim=0.0,
-        alpha_s=-1.3,
-        m_s_star=24.5,
-        n_ms=200,
     )
 
     # Ground truth from target distribution

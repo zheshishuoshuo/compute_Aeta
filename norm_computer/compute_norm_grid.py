@@ -36,6 +36,8 @@ def generate_lens_samples_no_alpha(
     mu_DM=13.0,
     sigma_DM=0.2,
     n_sigma=5,
+    alpha_s=-1.3,
+    m_s_star=24.5,
 ):
     """按照真实先验生成透镜样本（不包含 ``alpha_sps``）。
 
@@ -49,11 +51,13 @@ def generate_lens_samples_no_alpha(
         暗物质先验的均值与标准差。
     n_sigma : int
         生成 ``logMh`` 的范围倍数。
+    alpha_s, m_s_star : float
+        Schechter-like 源星等分布的参数。
 
     Returns
     -------
     samples : list[tuple]
-        ``(logM_star, logRe, logMh, beta)`` 的列表。
+        ``(logM_star, logRe, logMh, beta, m_s)`` 的列表。
     Mh_range : tuple
         ``(Mh_min, Mh_max)`` 用于重要性权重。
     """
@@ -79,25 +83,20 @@ def generate_lens_samples_no_alpha(
     # --- Source position ---
     beta = rng.uniform(0.0, 1.0, n_samples)
 
-    return list(zip(logMstar, logRe, logMh, beta)), (Mh_min, Mh_max)
+    # --- Source magnitude ---
+    m_s = sample_m_s(alpha_s, m_s_star, size=n_samples, rng=rng)
+
+    return list(zip(logMstar, logRe, logMh, beta, m_s)), (Mh_min, Mh_max)
 
 # === Core Computation ===
 def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
-                       zl=0.3, zs=2.0, ms=26.0, sigma_m=0.1, m_lim=26.5,
-                       alpha_s=-1.3, m_s_star=24.5, n_ms=100):
+                       zl=0.3, zs=2.0, sigma_m=0.1, m_lim=26.5):
     """
     计算 A(η)：物理归一化因子，考虑所有先验权重。
     返回值按照有效样本的权重总和进行归一化。
 
-    ``ms`` 参数保留以保持接口兼容，实际计算中将源星等
-    在 Schechter-like 分布 ``p(m_s)`` 上进行边际化。
-
-    其他参数
-    ----------
-    alpha_s, m_s_star : float
-        源亮度函数的斜率与特征星等。
-    n_ms : int
-        为边际化采样的 ``m_s`` 数量。
+    ``samples`` 需包含 ``m_s``（源星等）以对其分布进行
+    蒙特卡洛边际化。
     """
     Mh_min, Mh_max = Mh_range
     q_Mh = 1.0 / (Mh_max - Mh_min)
@@ -106,7 +105,7 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     samples_array = np.asarray(samples)
     if samples_array.size == 0:
         return 0.0
-    logMstar_array, logRe_array, logMh_array, beta_array = samples_array.T
+    logMstar_array, logRe_array, logMh_array, beta_array, m_s_array = samples_array.T
 
     # === DM 条件均值和权重 (向量化) ===
     logRe_model_array = logRe_of_logMsps(logMstar_array)
@@ -126,7 +125,7 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     muA_array = np.full(n, np.nan)
     muB_array = np.full(n, np.nan)
 
-    for i, (logMstar, logRe, logMh, beta) in enumerate(samples_array):
+    for i, (logMstar, logRe, logMh, beta, _) in enumerate(samples_array):
         try:
             model = LensModel(logMstar, logMh, logRe, zl=zl, zs=zs)
             xA, xB = solve_single_lens(model, beta_unit=beta)
@@ -149,22 +148,18 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
     valid_muA = muA_array[valid_mask]
     valid_muB = muB_array[valid_mask]
     w_valid = w_array[valid_mask]
+    valid_ms = m_s_array[valid_mask]
 
     if valid_muA.size == 0:
         return 0.0
 
-    rng = np.random.default_rng(0)
-    m_s_vals = sample_m_s(alpha_s, m_s_star, size=n_ms, rng=rng)
-    totals = []
-    for m_s_i in m_s_vals:
-        magA = m_s_i - 2.5 * np.log10(valid_muA)
-        magB = m_s_i - 2.5 * np.log10(valid_muB)
-        selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
-        selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
-        totals.append(np.sum(selA * selB * w_valid))
+    magA = valid_ms - 2.5 * np.log10(valid_muA)
+    magB = valid_ms - 2.5 * np.log10(valid_muB)
+    selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
+    selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
+    total = np.sum(selA * selB * w_valid)
 
-    avg_total = np.mean(totals)
-    return avg_total / weight_sum
+    return total / weight_sum
 # === 单点计算任务 ===
 
 def single_A_eta_entry(args, seed=None):
