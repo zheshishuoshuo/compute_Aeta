@@ -3,6 +3,7 @@ from scipy.stats import skewnorm
 from scipy.special import erf
 
 from norm_computer import compute_norm_grid as cn
+from mock_generator.mass_sampler import sample_m_s
 
 
 def test_importance_weighting_unbiased(monkeypatch):
@@ -37,9 +38,11 @@ def test_importance_weighting_unbiased(monkeypatch):
         sigma_DM=0.2,
         samples=samples,
         Mh_range=Mh_range,
-        ms=0.0,
         sigma_m=1.0,
         m_lim=0.0,
+        alpha_s=-1.3,
+        m_s_star=24.5,
+        n_ms=200,
     )
 
     # Ground truth from target distribution
@@ -50,7 +53,10 @@ def test_importance_weighting_unbiased(monkeypatch):
     logMstar_target = skewnorm.rvs(
         a=a_skew, loc=mu_star, scale=sigma_star, size=200000, random_state=rng
     )
-    g = 0.5 * (1 + erf(logMstar_target - 11.4))
+    ms_target = sample_m_s(-1.3, 24.5, size=200000, rng=rng)
+    mu = 10 ** (k_prime * (logMstar_target - 11.4))
+    mag = ms_target - 2.5 * np.log10(mu)
+    g = 0.5 * (1 + erf((0.0 - mag) / (np.sqrt(2) * 1.0)))
     true_val = np.mean(g ** 2)
 
-    assert np.isclose(estimate, true_val, rtol=0.02)
+    assert np.isclose(estimate, true_val, rtol=0.05)

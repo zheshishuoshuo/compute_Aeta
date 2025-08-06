@@ -8,7 +8,7 @@ from scipy.stats import norm, skewnorm
 from scipy.special import erf
 from ..mock_generator.lens_model import LensModel
 from ..mock_generator.lens_solver import solve_single_lens
-from ..mock_generator.mass_sampler import MODEL_PARAMS
+from ..mock_generator.mass_sampler import MODEL_PARAMS, sample_m_s
 
 MODEL_P = MODEL_PARAMS["deVauc"]
 # === Utils ===
@@ -83,10 +83,21 @@ def generate_lens_samples_no_alpha(
 
 # === Core Computation ===
 def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
-                       zl=0.3, zs=2.0, ms=26.0, sigma_m=0.1, m_lim=26.5):
+                       zl=0.3, zs=2.0, ms=26.0, sigma_m=0.1, m_lim=26.5,
+                       alpha_s=-1.3, m_s_star=24.5, n_ms=100):
     """
     计算 A(η)：物理归一化因子，考虑所有先验权重。
     返回值按照有效样本的权重总和进行归一化。
+
+    ``ms`` 参数保留以保持接口兼容，实际计算中将源星等
+    在 Schechter-like 分布 ``p(m_s)`` 上进行边际化。
+
+    其他参数
+    ----------
+    alpha_s, m_s_star : float
+        源亮度函数的斜率与特征星等。
+    n_ms : int
+        为边际化采样的 ``m_s`` 数量。
     """
     Mh_min, Mh_max = Mh_range
     q_Mh = 1.0 / (Mh_max - Mh_min)
@@ -131,19 +142,29 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
         & np.isfinite(muA_array * muB_array)
     )
 
-    sel_prob_array = np.zeros(n)
-    if np.any(valid_mask):
-        magA = ms - 2.5 * np.log10(muA_array[valid_mask])
-        magB = ms - 2.5 * np.log10(muB_array[valid_mask])
+    weight_sum = np.sum(w_array)
+    if weight_sum <= 0:
+        return 0.0
 
+    valid_muA = muA_array[valid_mask]
+    valid_muB = muB_array[valid_mask]
+    w_valid = w_array[valid_mask]
+
+    if valid_muA.size == 0:
+        return 0.0
+
+    rng = np.random.default_rng(0)
+    m_s_vals = sample_m_s(alpha_s, m_s_star, size=n_ms, rng=rng)
+    totals = []
+    for m_s_i in m_s_vals:
+        magA = m_s_i - 2.5 * np.log10(valid_muA)
+        magB = m_s_i - 2.5 * np.log10(valid_muB)
         selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
         selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
-        sel_prob_array[valid_mask] = selA * selB
+        totals.append(np.sum(selA * selB * w_valid))
 
-    total = np.sum(sel_prob_array * w_array)
-    weight_sum = np.sum(w_array)
-
-    return total / weight_sum if weight_sum > 0 else 0.0
+    avg_total = np.mean(totals)
+    return avg_total / weight_sum
 # === 单点计算任务 ===
 
 def single_A_eta_entry(args, seed=None):
