@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from multiprocessing import Pool, cpu_count
 from tqdm import tqdm
-from scipy.stats import norm, skewnorm
+from scipy.stats import norm, skewnorm, multivariate_normal
 from scipy.special import erf
 from ..mock_generator.lens_model import LensModel
 from ..mock_generator.lens_solver import solve_single_lens
@@ -82,11 +82,29 @@ def generate_lens_samples_no_alpha(
     return list(zip(logMstar, logRe, logMh, beta)), (Mh_min, Mh_max)
 
 # === Core Computation ===
-def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
-                       zl=0.3, zs=2.0, ms=26.0, sigma_m=0.1, m_lim=26.5):
+def compute_A_phys_eta(
+    mu_DM_cnst,
+    beta_DM,
+    xi_DM,
+    sigma_DM,
+    samples,
+    Mh_range,
+    zl=0.3,
+    zs=2.0,
+    ms=26.0,
+    sigma_m=0.1,
+    m_lim=26.5,
+    sigma_ms=None,
+):
     """
     计算 A(η)：物理归一化因子，考虑所有先验权重。
-    返回值按照有效样本的权重总和进行归一化。
+    可选对源星等 ``ms`` 的先验进行高斯边际化。
+
+    Parameters
+    ----------
+    sigma_ms : float, optional
+        若提供，则假定 ``ms`` 服从 ``N(ms, sigma_ms^2)``，并对其进行
+        边际化；否则 ``ms`` 视为定值。
     """
     Mh_min, Mh_max = Mh_range
     q_Mh = 1.0 / (Mh_max - Mh_min)
@@ -133,12 +151,27 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
 
     sel_prob_array = np.zeros(n)
     if np.any(valid_mask):
-        magA = ms - 2.5 * np.log10(muA_array[valid_mask])
-        magB = ms - 2.5 * np.log10(muB_array[valid_mask])
+        muA_val = muA_array[valid_mask]
+        muB_val = muB_array[valid_mask]
 
-        selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
-        selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
-        sel_prob_array[valid_mask] = selA * selB
+        if not sigma_ms:
+            magA = ms - 2.5 * np.log10(muA_val)
+            magB = ms - 2.5 * np.log10(muB_val)
+
+            selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
+            selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
+            sel_prob_array[valid_mask] = selA * selB
+        else:
+            sigma_tot = np.sqrt(sigma_m ** 2 + sigma_ms ** 2)
+            rho = sigma_ms ** 2 / (sigma_tot ** 2)
+            tA = m_lim + 2.5 * np.log10(muA_val)
+            tB = m_lim + 2.5 * np.log10(muB_val)
+            zA = (tA - ms) / sigma_tot
+            zB = (tB - ms) / sigma_tot
+            mvn = multivariate_normal(mean=[0, 0], cov=[[1, rho], [rho, 1]])
+            sel_prob_array[valid_mask] = np.array(
+                [mvn.cdf([za, zb]) for za, zb in zip(zA, zB)]
+            )
 
     total = np.sum(sel_prob_array * w_array)
     weight_sum = np.sum(w_array)
