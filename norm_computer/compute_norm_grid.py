@@ -188,9 +188,12 @@ def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
         selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
         sel = selA * selB
 
-        valid = np.isfinite(sel)
-        weighted = sel[valid] * p_Mh[valid]
-        norm_factor = p_Mh[valid].sum()
+        weight = p_Mh
+        valid = (muA > 0) & (muB > 0) & np.isfinite(muA * muB)
+        sel = sel[valid]
+        weight = weight[valid]
+        weighted = sel * weight
+        norm_factor = weight.sum()
         if norm_factor > 0:
             total += weighted.sum() / norm_factor
 
