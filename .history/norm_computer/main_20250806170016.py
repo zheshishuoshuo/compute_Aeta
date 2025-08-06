@@ -14,7 +14,7 @@ def main():
 
     muDM_grid    = np.linspace(11.5, 13.5, 2)
     sigmaDM_grid = np.linspace(0.01, 0.5, 2)
-    betaDM_grid  = np.linspace(0, 3.0, 2)
+    betaDM_grid  = np.linspace(0, 3.0, 200)
     xiDM_grid    = 0
 
     build_A_phys_table_parallel_4D(
