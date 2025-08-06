@@ -39,7 +39,12 @@ def generate_lens_samples_no_alpha(
     alpha_s=-1.3,
     m_s_star=24.5,
 ):
-    """按照真实先验生成透镜样本（不包含 ``alpha_sps``）。
+    """按照先验生成透镜样本（不包含 ``alpha_sps`` 和 ``logMh``）。
+
+    本函数只负责从真实的先验分布中抽取与透镜本身有关的
+    随机量（如 ``logM_star``、``logRe``、源位置和源星等）。
+    ``logMh`` 将在后续的物理响应表中离散化处理，因此不再
+    在采样阶段生成。
 
     Parameters
     ----------
@@ -48,18 +53,19 @@ def generate_lens_samples_no_alpha(
     seed : int, optional
         随机数种子。
     mu_DM, sigma_DM : float
-        暗物质先验的均值与标准差。
+        暗物质先验的均值与标准差（仅用于确定 ``logMh`` 网格
+        的范围，采样阶段并未使用）。
     n_sigma : int
-        生成 ``logMh`` 的范围倍数。
+        ``logMh`` 网格范围的倍数。
     alpha_s, m_s_star : float
         Schechter-like 源星等分布的参数。
 
     Returns
     -------
     samples : list[tuple]
-        ``(logM_star, logRe, logMh, beta, m_s)`` 的列表。
+        ``(logM_star, logRe, beta, m_s)`` 的列表。
     Mh_range : tuple
-        ``(Mh_min, Mh_max)`` 用于重要性权重。
+        ``(Mh_min, Mh_max)`` 供构建 ``logMh`` 网格时参考。
     """
 
     rng = np.random.default_rng(seed)
@@ -75,10 +81,9 @@ def generate_lens_samples_no_alpha(
     mu_Re = logRe_of_logMsps(logMstar)
     logRe = rng.normal(loc=mu_Re, scale=MODEL_P["sigma_R"], size=n_samples)
 
-    # --- Halo mass sampled uniformly in wide range ---
+    # --- Range of halo mass for later grid construction ---
     Mh_min = mu_DM - n_sigma * sigma_DM
     Mh_max = mu_DM + n_sigma * sigma_DM
-    logMh = rng.uniform(Mh_min, Mh_max, n_samples)
 
     # --- Source position ---
     beta = rng.uniform(0.0, 1.0, n_samples)
@@ -86,28 +91,87 @@ def generate_lens_samples_no_alpha(
     # --- Source magnitude ---
     m_s = sample_m_s(alpha_s, m_s_star, size=n_samples, rng=rng)
 
-    return list(zip(logMstar, logRe, logMh, beta, m_s)), (Mh_min, Mh_max)
+    return list(zip(logMstar, logRe, beta, m_s)), (Mh_min, Mh_max)
 
-# === Core Computation ===
-def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
-                       zl=0.3, zs=2.0, sigma_m=0.1, m_lim=26.5):
+# === Physical response table ===
+def build_physical_response_table(samples, logMh_grid, logalpha_grid,
+                                  zl=0.3, zs=2.0):
+    """为给定透镜样本构建物理响应表。
+
+    该步骤与超参数 ``η`` 无关，只计算在 ``(logMh, logalpha)`` 网格上
+    每个透镜的放大率等物理量，并缓存结果以便后续重复利用。
+
+    Parameters
+    ----------
+    samples : list[tuple]
+        ``(logM_star, logRe, beta, m_s)`` 的样本列表。
+    logMh_grid, logalpha_grid : array-like
+        物理量空间的网格定义。
+    zl, zs : float
+        透镜和源的红移。
+
+    Returns
+    -------
+    muA_table, muB_table : ndarray
+        形状为 ``(N_lens, N_Mh, N_alpha)`` 的放大率表。
     """
-    计算 A(η)：物理归一化因子，考虑所有先验权重。
-    返回值按照有效样本的权重总和进行归一化。
 
-    ``samples`` 需包含 ``m_s``（源星等）以对其分布进行
-    蒙特卡洛边际化。
+    n_lens = len(samples)
+    n_Mh = len(logMh_grid)
+    n_alpha = len(logalpha_grid)
+    muA = np.full((n_lens, n_Mh, n_alpha), np.nan)
+    muB = np.full((n_lens, n_Mh, n_alpha), np.nan)
+
+    for i, (logMstar, logRe, beta, _) in enumerate(samples):
+        for j, logMh in enumerate(logMh_grid):
+            for k, logalpha in enumerate(logalpha_grid):
+                try:
+                    # 当前 LensModel 尚未使用 logalpha 参数，预留接口
+                    model = LensModel(logMstar, logMh, logRe, zl=zl, zs=zs)
+                    xA, xB = solve_single_lens(model, beta_unit=beta)
+                    muA[i, j, k] = model.mu_from_rt(xA)
+                    muB[i, j, k] = model.mu_from_rt(xB)
+                except Exception:
+                    continue
+
+    return muA, muB
+
+
+# === Hyper-parameter weighting ===
+def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
+                             logalpha_grid, mu_DM_cnst, beta_DM, xi_DM,
+                             sigma_DM, sigma_m=0.1, m_lim=26.5,
+                             p_logalpha=None):
+    """根据预计算的物理响应表和超参数 ``η`` 计算 ``A(η)``。
+
+    Parameters
+    ----------
+    muA_table, muB_table : ndarray
+        由 :func:`build_physical_response_table` 生成的放大率表。
+    samples : list[tuple]
+        ``(logM_star, logRe, beta, m_s)`` 的样本列表。
+    logMh_grid, logalpha_grid : array-like
+        物理网格定义。
+    mu_DM_cnst, beta_DM, xi_DM, sigma_DM : float
+        描述 ``P(logMh | logM_star)`` 的超参数。
+    sigma_m, m_lim : float
+        选择函数参数。
+    p_logalpha : array-like, optional
+        ``logalpha`` 的概率分布，若为 ``None`` 则视为均匀分布。
+
+    Returns
+    -------
+    float
+        ``A(η)`` 的估计值。
     """
-    Mh_min, Mh_max = Mh_range
-    q_Mh = 1.0 / (Mh_max - Mh_min)
 
-    # === 将样本转换为 NumPy 数组 ===
     samples_array = np.asarray(samples)
     if samples_array.size == 0:
         return 0.0
-    logMstar_array, logRe_array, logMh_array, beta_array, m_s_array = samples_array.T
 
-    # === DM 条件均值和权重 (向量化) ===
+    logMstar_array, logRe_array, beta_array, m_s_array = samples_array.T
+
+    # DM conditional mean for each lens
     logRe_model_array = logRe_of_logMsps(logMstar_array)
     mu_DM_i_array = (
         mu_DM_cnst
@@ -115,70 +179,79 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples, Mh_range,
         + xi_DM * (logRe_array - logRe_model_array)
     )
 
-    p_logMh = norm.pdf(logMh_array, loc=mu_DM_i_array, scale=sigma_DM)
+    # Probability over logalpha; default uniform
+    if p_logalpha is None:
+        p_logalpha = np.ones(len(logalpha_grid)) / len(logalpha_grid)
+    else:
+        p_logalpha = np.asarray(p_logalpha)
 
-    # Importance weights: only halo mass differs from sampling PDF
-    w_array = p_logMh / q_Mh
+    total = 0.0
+    n_lens = len(samples)
 
-    # === 对每个透镜求解放大率 ===
-    n = len(samples_array)
-    muA_array = np.full(n, np.nan)
-    muB_array = np.full(n, np.nan)
+    for idx in range(n_lens):
+        p_Mh = norm.pdf(logMh_grid, loc=mu_DM_i_array[idx], scale=sigma_DM)
+        weight = p_Mh[:, None] * p_logalpha[None, :]
 
-    for i, (logMstar, logRe, logMh, beta, _) in enumerate(samples_array):
-        try:
-            model = LensModel(logMstar, logMh, logRe, zl=zl, zs=zs)
-            xA, xB = solve_single_lens(model, beta_unit=beta)
-            muA_array[i] = model.mu_from_rt(xA)
-            muB_array[i] = model.mu_from_rt(xB)
-        except Exception:
-            continue
+        muA = muA_table[idx]
+        muB = muB_table[idx]
 
-    # === 选择函数 (向量化) ===
-    valid_mask = (
-        (muA_array > 0)
-        & (muB_array > 0)
-        & np.isfinite(muA_array * muB_array)
+        magA = m_s_array[idx] - 2.5 * np.log10(muA)
+        magB = m_s_array[idx] - 2.5 * np.log10(muB)
+        selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
+        selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
+        sel = selA * selB
+
+        valid = np.isfinite(sel)
+        weighted = sel[valid] * weight[valid]
+        norm_factor = weight[valid].sum()
+        if norm_factor > 0:
+            total += weighted.sum() / norm_factor
+
+    return total / n_lens
+
+
+def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples,
+                       logMh_grid, logalpha_grid, zl=0.3, zs=2.0,
+                       sigma_m=0.1, m_lim=26.5, p_logalpha=None):
+    """Convenience wrapper performing both stages for a single ``η``.
+
+    This function is retained for compatibility with earlier code but now
+    merely orchestrates the two-step procedure:
+
+    1. 生成物理响应表 (:func:`build_physical_response_table`)
+    2. 根据超参数加权求和 (:func:`compute_A_eta_from_table`)
+    """
+
+    muA_table, muB_table = build_physical_response_table(
+        samples, logMh_grid, logalpha_grid, zl=zl, zs=zs
     )
-
-    weight_sum = np.sum(w_array)
-    if weight_sum <= 0:
-        return 0.0
-
-    valid_muA = muA_array[valid_mask]
-    valid_muB = muB_array[valid_mask]
-    w_valid = w_array[valid_mask]
-    valid_ms = m_s_array[valid_mask]
-
-    if valid_muA.size == 0:
-        return 0.0
-
-    magA = valid_ms - 2.5 * np.log10(valid_muA)
-    magB = valid_ms - 2.5 * np.log10(valid_muB)
-    selA = 0.5 * (1 + erf((m_lim - magA) / (np.sqrt(2) * sigma_m)))
-    selB = 0.5 * (1 + erf((m_lim - magB) / (np.sqrt(2) * sigma_m)))
-    total = np.sum(selA * selB * w_valid)
-
-    return total / weight_sum
+    return compute_A_eta_from_table(
+        muA_table, muB_table, samples, logMh_grid, logalpha_grid,
+        mu_DM_cnst, beta_DM, xi_DM, sigma_DM,
+        sigma_m=sigma_m, m_lim=m_lim, p_logalpha=p_logalpha,
+    )
 # === 单点计算任务 ===
 
-def single_A_eta_entry(args, seed=None):
+def single_A_eta_entry(args, seed=None, logalpha_grid=None, n_mh=100):
     """Compute a single entry of :math:`A_\text{phys}(\eta)`.
 
     Parameters
     ----------
     args : tuple
-        ``(muDM, sigmaDM, beta_DM, xi_DM, n_samples, n_sigma)``
-        defining the physical model.
+        ``(muDM, sigmaDM, beta_DM, xi_DM, n_samples, n_sigma)`` defining
+        the physical model.
     seed : int, optional
-        Base random seed.  The actual seed used for the RNG is
-        ``(seed or os.getpid()) + hash(args) % 2**32`` ensuring a unique
-        and reproducible stream for each parameter tuple.
+        Base random seed for sample generation.
+    logalpha_grid : array-like, optional
+        ``logalpha`` 网格；若为 ``None`` 则默认单点 ``0``。
+    n_mh : int
+        ``logMh`` 网格的长度。
     """
 
     muDM, sigmaDM, beta_DM, xi_DM, n_samples, n_sigma = args
     base_seed = os.getpid() if seed is None else seed
     unique_seed = (base_seed + hash(args)) % 2**32
+
     samples, Mh_range = generate_lens_samples_no_alpha(
         n_samples=n_samples,
         mu_DM=muDM,
@@ -186,20 +259,24 @@ def single_A_eta_entry(args, seed=None):
         n_sigma=n_sigma,
         seed=unique_seed,
     )
-    A_eta = compute_A_phys_eta(
-        mu_DM_cnst=muDM,
-        beta_DM=beta_DM,
-        xi_DM=xi_DM,
-        sigma_DM=sigmaDM,
-        samples=samples,
-        Mh_range=Mh_range
+    Mh_min, Mh_max = Mh_range
+    logMh_grid = np.linspace(Mh_min, Mh_max, n_mh)
+    if logalpha_grid is None:
+        logalpha_grid = np.array([0.0])
+
+    muA_table, muB_table = build_physical_response_table(
+        samples, logMh_grid, logalpha_grid
+    )
+    A_eta = compute_A_eta_from_table(
+        muA_table, muB_table, samples, logMh_grid, logalpha_grid,
+        mu_DM_cnst=muDM, beta_DM=beta_DM, xi_DM=xi_DM, sigma_DM=sigmaDM,
     )
     return {
         'mu_DM': muDM,
         'sigma_DM': sigmaDM,
         'beta_DM': beta_DM,
         'xi_DM': xi_DM,
-        'A_phys': A_eta
+        'A_phys': A_eta,
     }
 
 # === 并行构建 A_phys 表格 ===

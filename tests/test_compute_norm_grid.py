@@ -28,16 +28,26 @@ def test_importance_weighting_unbiased(monkeypatch):
     # Samples drawn from simple Gaussian distributions
     n_samples = 20000
     samples, Mh_range = cn.generate_lens_samples_no_alpha(
-        n_samples=n_samples, seed=0
+        n_samples=n_samples, seed=0, mu_DM=13.0, sigma_DM=0.2
+    )
+    Mh_min, Mh_max = Mh_range
+    logMh_grid = np.linspace(Mh_min, Mh_max, 50)
+    logalpha_grid = np.array([0.0])
+
+    muA_tab, muB_tab = cn.build_physical_response_table(
+        samples, logMh_grid, logalpha_grid
     )
 
-    estimate = cn.compute_A_phys_eta(
+    estimate = cn.compute_A_eta_from_table(
+        muA_tab,
+        muB_tab,
+        samples,
+        logMh_grid,
+        logalpha_grid,
         mu_DM_cnst=13.0,
         beta_DM=0.0,
         xi_DM=0.0,
         sigma_DM=0.2,
-        samples=samples,
-        Mh_range=Mh_range,
         sigma_m=1.0,
         m_lim=0.0,
     )
