@@ -44,6 +44,51 @@ MODEL_PARAMS = {
     }
 }
 
+
+def sample_m_s(alpha_s, m_s_star, size=1, rng=None):
+    """Sample source magnitude ``m_s`` from a Schechter-like distribution.
+
+    The probability density follows
+    ``p(m_s) \propto [10^{-0.4(m_s-m_s_star)}]^{alpha_s+1} \exp(-10^{-0.4(m_s-m_s_star)})``.
+
+    Parameters
+    ----------
+    alpha_s : float
+        Faint-end slope of the luminosity function.
+    m_s_star : float
+        Characteristic magnitude.
+    size : int, optional
+        Number of samples to draw.
+    rng : numpy.random.Generator, optional
+        Random number generator.
+
+    Returns
+    -------
+    numpy.ndarray
+        Sampled magnitudes with shape ``(size,)``.
+    """
+
+    if rng is None:
+        rng = np.random.default_rng()
+
+    m_min, m_max = 20.0, 30.0
+
+    def pdf(m):
+        x = 10 ** (-0.4 * (m - m_s_star))
+        return x ** (alpha_s + 1) * np.exp(-x)
+
+    grid = np.linspace(m_min, m_max, 1000)
+    f_max = pdf(grid).max()
+
+    samples = []
+    while len(samples) < size:
+        m = rng.uniform(m_min, m_max, size - len(samples))
+        u = rng.uniform(0, f_max, size - len(samples))
+        accepted = m[u < pdf(m)]
+        samples.extend(accepted)
+
+    return np.array(samples)
+
 # ==============================
 # 生成 logM_star_sps 样本（skew-normal）
 # ==============================
@@ -73,12 +118,14 @@ def logMh_given_logM_logRe(logM_star_sps, logRe, model='deVauc', rng=None):
 # ==============================
 # 主函数：生成完整样本
 # ==============================
-def generate_samples(n_samples, model='deVauc', random_state=None):
+def generate_samples(n_samples, model='deVauc', random_state=None,
+                     alpha_s=-1.3, m_s_star=24.5):
     """
     生成星系参数样本，包括：
     - logM_star_sps: stellar mass (SPS)
     - logRe: effective radius
     - logMh: halo mass
+    - m_s: source magnitude sampled from luminosity function
     - z: redshift (固定为 1)
     - gamma_in: 初始内密度坡度（固定为 1）
     - C: halo 浓度参数（固定为 20）
@@ -87,9 +134,11 @@ def generate_samples(n_samples, model='deVauc', random_state=None):
         n_samples: 样本数量
         model: 使用的结构模型，支持 'deVauc', 'SerExp', 'Sersic'
         random_state: 可选整数或 np.random.Generator
+        alpha_s: 源亮度函数的斜率参数
+        m_s_star: 源亮度函数的特征星等
 
     返回:
-        dict，包含字段 logM_star_sps, logRe, logMh, z, gamma_in, C
+        dict，包含字段 logM_star_sps, logRe, logMh, m_s, z, gamma_in, C
     """
     if isinstance(random_state, (int, type(None))):
         rng = np.random.default_rng(random_state)
@@ -101,11 +150,13 @@ def generate_samples(n_samples, model='deVauc', random_state=None):
     logM_star_sps = mstar_gene(n_samples, model=model, rng=rng)
     logRe = logRe_given_logM(logM_star_sps, model=model, rng=rng)
     logMh = logMh_given_logM_logRe(logM_star_sps, logRe, model=model, rng=rng)
+    m_s = sample_m_s(alpha_s, m_s_star, size=n_samples, rng=rng)
 
     return {
         'logM_star_sps': logM_star_sps,
         'logRe': logRe,
         'logMh': logMh,
+        'm_s': m_s,
         'z': np.ones(n_samples),
         'gamma_in': np.ones(n_samples),
         'C': np.ones(n_samples) * 20
