@@ -32,10 +32,9 @@ def test_importance_weighting_unbiased(monkeypatch):
     )
     Mh_min, Mh_max = Mh_range
     logMh_grid = np.linspace(Mh_min, Mh_max, 50)
-    logalpha_grid = np.array([0.0])
 
     muA_tab, muB_tab = cn.build_physical_response_table(
-        samples, logMh_grid, logalpha_grid
+        samples, logMh_grid
     )
 
     estimate = cn.compute_A_eta_from_table(
@@ -43,7 +42,6 @@ def test_importance_weighting_unbiased(monkeypatch):
         muB_tab,
         samples,
         logMh_grid,
-        logalpha_grid,
         mu_DM_cnst=13.0,
         beta_DM=0.0,
         xi_DM=0.0,
