@@ -276,6 +276,8 @@ def build_A_phys_table_parallel_4D(
     mixes this seed with a hash of the tuple, yielding deterministic and
     independent random streams across workers.
     """
+    print(f"[DEBUG] compute_A_phys_eta called with η = , n_samples = {n_samples}")
+
     if nproc is None:
         nproc = max(1, cpu_count() - 1)
 
