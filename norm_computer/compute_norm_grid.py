@@ -94,54 +94,50 @@ def generate_lens_samples_no_alpha(
     return list(zip(logMstar, logRe, beta, m_s)), (Mh_min, Mh_max)
 
 # === Physical response table ===
-def build_physical_response_table(samples, logMh_grid, logalpha_grid,
-                                  zl=0.3, zs=2.0):
+def build_physical_response_table(samples, logMh_grid, zl=0.3, zs=2.0):
     """为给定透镜样本构建物理响应表。
 
-    该步骤与超参数 ``η`` 无关，只计算在 ``(logMh, logalpha)`` 网格上
-    每个透镜的放大率等物理量，并缓存结果以便后续重复利用。
+    本函数曾预留 ``logalpha`` 维度，但当前透镜模型与其无关，故
+    仅在 ``logMh`` 网格上计算放大率等物理量，并缓存结果以便后续
+    重复利用。
 
     Parameters
     ----------
     samples : list[tuple]
         ``(logM_star, logRe, beta, m_s)`` 的样本列表。
-    logMh_grid, logalpha_grid : array-like
-        物理量空间的网格定义。
+    logMh_grid : array-like
+        暗物质质量的网格定义。
     zl, zs : float
         透镜和源的红移。
 
     Returns
     -------
     muA_table, muB_table : ndarray
-        形状为 ``(N_lens, N_Mh, N_alpha)`` 的放大率表。
+        形状为 ``(N_lens, N_Mh)`` 的放大率表。
     """
 
     n_lens = len(samples)
     n_Mh = len(logMh_grid)
-    n_alpha = len(logalpha_grid)
-    muA = np.full((n_lens, n_Mh, n_alpha), np.nan)
-    muB = np.full((n_lens, n_Mh, n_alpha), np.nan)
+    muA = np.full((n_lens, n_Mh), np.nan)
+    muB = np.full((n_lens, n_Mh), np.nan)
 
     for i, (logMstar, logRe, beta, _) in enumerate(samples):
         for j, logMh in enumerate(logMh_grid):
-            for k, logalpha in enumerate(logalpha_grid):
-                try:
-                    # 当前 LensModel 尚未使用 logalpha 参数，预留接口
-                    model = LensModel(logMstar, logMh, logRe, zl=zl, zs=zs)
-                    xA, xB = solve_single_lens(model, beta_unit=beta)
-                    muA[i, j, k] = model.mu_from_rt(xA)
-                    muB[i, j, k] = model.mu_from_rt(xB)
-                except Exception:
-                    continue
+            try:
+                model = LensModel(logMstar, logMh, logRe, zl=zl, zs=zs)
+                xA, xB = solve_single_lens(model, beta_unit=beta)
+                muA[i, j] = model.mu_from_rt(xA)
+                muB[i, j] = model.mu_from_rt(xB)
+            except Exception:
+                continue
 
     return muA, muB
 
 
 # === Hyper-parameter weighting ===
 def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
-                             logalpha_grid, mu_DM_cnst, beta_DM, xi_DM,
-                             sigma_DM, sigma_m=0.1, m_lim=26.5,
-                             p_logalpha=None):
+                             mu_DM_cnst, beta_DM, xi_DM, sigma_DM,
+                             sigma_m=0.1, m_lim=26.5):
     """根据预计算的物理响应表和超参数 ``η`` 计算 ``A(η)``。
 
     Parameters
@@ -150,14 +146,12 @@ def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
         由 :func:`build_physical_response_table` 生成的放大率表。
     samples : list[tuple]
         ``(logM_star, logRe, beta, m_s)`` 的样本列表。
-    logMh_grid, logalpha_grid : array-like
+    logMh_grid : array-like
         物理网格定义。
     mu_DM_cnst, beta_DM, xi_DM, sigma_DM : float
         描述 ``P(logMh | logM_star)`` 的超参数。
     sigma_m, m_lim : float
         选择函数参数。
-    p_logalpha : array-like, optional
-        ``logalpha`` 的概率分布，若为 ``None`` 则视为均匀分布。
 
     Returns
     -------
@@ -179,18 +173,11 @@ def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
         + xi_DM * (logRe_array - logRe_model_array)
     )
 
-    # Probability over logalpha; default uniform
-    if p_logalpha is None:
-        p_logalpha = np.ones(len(logalpha_grid)) / len(logalpha_grid)
-    else:
-        p_logalpha = np.asarray(p_logalpha)
-
     total = 0.0
     n_lens = len(samples)
 
     for idx in range(n_lens):
         p_Mh = norm.pdf(logMh_grid, loc=mu_DM_i_array[idx], scale=sigma_DM)
-        weight = p_Mh[:, None] * p_logalpha[None, :]
 
         muA = muA_table[idx]
         muB = muB_table[idx]
@@ -202,8 +189,8 @@ def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
         sel = selA * selB
 
         valid = np.isfinite(sel)
-        weighted = sel[valid] * weight[valid]
-        norm_factor = weight[valid].sum()
+        weighted = sel[valid] * p_Mh[valid]
+        norm_factor = p_Mh[valid].sum()
         if norm_factor > 0:
             total += weighted.sum() / norm_factor
 
@@ -211,8 +198,8 @@ def compute_A_eta_from_table(muA_table, muB_table, samples, logMh_grid,
 
 
 def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples,
-                       logMh_grid, logalpha_grid, zl=0.3, zs=2.0,
-                       sigma_m=0.1, m_lim=26.5, p_logalpha=None):
+                       logMh_grid, zl=0.3, zs=2.0,
+                       sigma_m=0.1, m_lim=26.5):
     """Convenience wrapper performing both stages for a single ``η``.
 
     This function is retained for compatibility with earlier code but now
@@ -223,16 +210,16 @@ def compute_A_phys_eta(mu_DM_cnst, beta_DM, xi_DM, sigma_DM, samples,
     """
 
     muA_table, muB_table = build_physical_response_table(
-        samples, logMh_grid, logalpha_grid, zl=zl, zs=zs
+        samples, logMh_grid, zl=zl, zs=zs
     )
     return compute_A_eta_from_table(
-        muA_table, muB_table, samples, logMh_grid, logalpha_grid,
+        muA_table, muB_table, samples, logMh_grid,
         mu_DM_cnst, beta_DM, xi_DM, sigma_DM,
-        sigma_m=sigma_m, m_lim=m_lim, p_logalpha=p_logalpha,
+        sigma_m=sigma_m, m_lim=m_lim,
     )
 # === 单点计算任务 ===
 
-def single_A_eta_entry(args, seed=None, logalpha_grid=None, n_mh=100):
+def single_A_eta_entry(args, seed=None, n_mh=100):
     """Compute a single entry of :math:`A_\text{phys}(\eta)`.
 
     Parameters
@@ -242,8 +229,6 @@ def single_A_eta_entry(args, seed=None, logalpha_grid=None, n_mh=100):
         the physical model.
     seed : int, optional
         Base random seed for sample generation.
-    logalpha_grid : array-like, optional
-        ``logalpha`` 网格；若为 ``None`` 则默认单点 ``0``。
     n_mh : int
         ``logMh`` 网格的长度。
     """
@@ -261,15 +246,13 @@ def single_A_eta_entry(args, seed=None, logalpha_grid=None, n_mh=100):
     )
     Mh_min, Mh_max = Mh_range
     logMh_grid = np.linspace(Mh_min, Mh_max, n_mh)
-    if logalpha_grid is None:
-        logalpha_grid = np.array([0.0])
 
     muA_table, muB_table = build_physical_response_table(
-        samples, logMh_grid, logalpha_grid
+        samples, logMh_grid
     )
     A_eta = compute_A_eta_from_table(
-        muA_table, muB_table, samples, logMh_grid, logalpha_grid,
-        mu_DM_cnst=muDM, beta_DM=beta_DM, xi_DM=xi_DM, sigma_DM=sigmaDM,
+        muA_table, muB_table, samples, logMh_grid,
+        mu_DM_cnst=muDM, beta_DM=beta_DM, xi_DM=xiDM, sigma_DM=sigmaDM,
     )
     return {
         'mu_DM': muDM,
